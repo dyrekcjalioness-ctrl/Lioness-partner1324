@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LIONESS Partner Panel</title>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <style>        
+        body { background: #071529; color: #fff; font-family: Arial; padding: 10px; }        
+        .logo-box { text-align: center; margin-bottom: 15px; color: #f2c94c; }        
+        .panel { background: #0f2743; padding: 15px; border-radius: 12px; margin-bottom: 10px; }        
+        .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }        
+        .cell { padding: 8px; background: #0b1e33; border-radius: 6px; text-align: center; cursor: pointer; font-size: 12px; }        
+        .selected { border: 2px solid #f2c94c; }        
+        .today { border: 2px solid #f2c94c !important; }        
+        .hour { display: flex; justify-content: space-between; padding: 10px; background: #0b1e33; margin-bottom: 5px; border-radius: 6px; align-items:center; }        
+        .hour.red { border: 1px solid #e74c3c; background: #2c1a1a; }        
+        input, select { width: 100%; padding: 10px; margin: 5px 0; border-radius: 6px; border: none; background: #132b4a; color: #fff; box-sizing: border-box; }        
+        button { padding: 10px; border: none; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 5px; background: #163a63; color: #fff; }        
+        .green { background: #2ecc71; }        
+        .red { background: #c0392b; }        
+        .calc { background: #10243f; padding: 10px; border-radius: 8px; margin-top: 10px; font-size: 13px; color: #f2c94c; }    
+    </style>
+</head>
+<body>
+<div class="logo-box">
+    <h2>LIONESS Partner Panel</h2>
+    <input id="partnerId" placeholder="ID Partnera (tel)" onchange="localStorage.setItem('pID', this.value)">
+    <input id="partnerName" placeholder="Imię" onchange="localStorage.setItem('pName', this.value)">
+    <input id="partnerSurname" placeholder="Nazwisko" onchange="localStorage.setItem('pSurname', this.value)">
+    <!-- Додане поле для рахунку -->
+    <input id="bankAccount" placeholder="Numer konta bankowego" onchange="localStorage.setItem('pBank', this.value)">
+    <button class="green" onclick="registerPartner()">REJESTRACJA</button>
+</div>
+
+<div class="panel">    
+    <h3 id="month" style="text-align:center"></h3>    
+    <div class="grid" id="cal"></div>
+</div>
+
+<div class="panel" id="formPanel" style="display:none;">
+    <h3>Rezerwacja</h3>
+    <input id="name" placeholder="Imię klienta">
+    <input id="phone" placeholder="Telefon">
+    <input id="addr" placeholder="Adres (np. Rzeczna 4/15 Poznań 61-013)" oninput="calc()">
+    <input id="regNum" placeholder="Nr rejestracyjny">
+    <select id="servicePick" onchange="calc()"></select>
+    <div class="calc" id="calcBox">Wynik kalkulacji...</div>
+    <button class="green" onclick="save()">Zapisz rezerwację</button>
+    <button onclick="document.getElementById('formPanel').style.display='none'">Zamknij</button>
+</div>
+
+<div class="panel" id="hours"></div>
+
+<script>    
+    firebase.initializeApp({apiKey:"AIzaSyAG1ukkWJC_05JCeZp41EhyoVJ2Cl58",databaseURL:"https://kalendar-f5dd9-default-rtdb.firebaseio.com"});    
+    const db = firebase.database();    
+    let d = new Date(), sel = null, hour = null, services = {}, bookings = {}, firm = {address:"Rzeczna 4/15 Poznań 61-013", freeKm:5, priceKm:10};    
+    const HOURS = ["07:00","09:00","11:00","13:00","15:00","17:00","19:00","21:00"];
+
+    // Завантаження збережених даних
+    document.getElementById("partnerId").value = localStorage.getItem("pID") || "";    
+    document.getElementById("partnerName").value = localStorage.getItem("pName") || "";    
+    document.getElementById("partnerSurname").value = localStorage.getItem("pSurname") || "";
+    document.getElementById("bankAccount").value = localStorage.getItem("pBank") || "";
+
+    db.ref("services").on("value", s => { services = s.val()||{}; renderServices(); });    
+    db.ref("bookings").on("value", s => { bookings = s.val()||{}; render(); if(sel) renderHours(); });    
+    db.ref("settings").on("value", s => { firm = s.val()||firm; });
+
+    function validateAddress(addr) { return /\d{2}-\d{3}/.test(addr) && addr.length > 10; }
+
+    function registerPartner() {        
+        let pID = document.getElementById("partnerId").value;        
+        let pName = document.getElementById("partnerName").value;
+        let pBank = document.getElementById("bankAccount").value;
+        if(!pID || !pName || !pBank) return alert("Wpisz ID, Imię i numer konta!");        
+        db.ref(`pending_partners/${pID.replace(/\./g, '_')}`).set({ 
+            id: pID, 
+            name: pName, 
+            bankAccount: pBank,
+            status: 'pending' 
+        });        
+        alert("Wysłano prośbę o rejestrację!");    
+    }
+
+    // ... (Геолокація та інші функції залишаються без змін) ...
+    async function geocode(a){ try { const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(a)}`); const d = await r.json(); return d[0] ? {lat:+d[0].lat, lon:+d[0].lon} : null; } catch(e) { return null; } }
+    async function getKm(a,b){ const x = await geocode(a); const y = await geocode(b); if(!x || !y) return 0; const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${x.lon},${x.lat};${y.lon},${y.lat}?overview=false`); const j = await r.json(); return (j.routes && j.routes[0]) ? j.routes[0].distance / 1000 : 0; }
+    async function calc(){ let id = document.getElementById("servicePick").value; let s = services[id]; if(!s) return; let addr = document.getElementById("addr").value; let km = 0, extra = 0; if(addr.length > 5){ km = await getKm(firm.address, addr); if(km > firm.freeKm) extra = (km - firm.freeKm) * firm.priceKm; } let total = (+s.price + extra).toFixed(2); document.getElementById("calcBox").innerHTML = `<b>${s.name}</b><br>Dojazd: ${km.toFixed(1)} km<br>Extra: ${extra.toFixed(2)} zł<br><b>RAZEM: <span id="finalTotal">${total}</span> zł</b>`; }
+    function render() { let c = document.getElementById("cal"); c.innerHTML = ""; let y = d.getFullYear(), m = d.getMonth(); let todayStr = `${new Date().getFullYear()}-${new Date().getMonth()+1}-${new Date().getDate()}`; document.getElementById("month").innerText = new Date(y, m).toLocaleString("pl-PL", {month:"long", year:"numeric"}); for(let i=1; i<=new Date(y, m+1, 0).getDate(); i++) { let key = `${y}-${m+1}-${i}`; let busy = bookings[key] ? Object.keys(bookings[key]).length : 0; let div = document.createElement("div"); div.className = "cell" + (sel==key?" selected":"") + (key==todayStr?" today":""); div.innerHTML = `<b>${i}</b><br><small>Wolne: ${HOURS.length-busy}</small>`; div.onclick = () => { sel=key; render(); renderHours(); }; c.appendChild(div); } }
+    function renderHours() { let h = document.getElementById("hours"); h.innerHTML = ""; let pID = localStorage.getItem("pID"); HOURS.forEach(t => { let r = bookings[sel] ? bookings[sel][t] : null; let isMine = r && r.partnerId === pID; let div = document.createElement("div"); div.className = "hour" + (r ? " red" : ""); div.innerHTML = `<div style="font-size: 12px; width: 100%;"><b>${t}</b> ${r ? `<br>👤 ${r.name}<br>📞 ${r.phone}<br>🚗 ${r.reg}<br>📍 ${r.addr}<br>🛠 ${r.note}<br>💰 RAZEM: ${r.totalPrice} zł` : "WOLNE"}</div><div>${(isMine || !r) ? `<button style="width:auto" onclick="openF('${t}')">${r ? "Edytuj" : "Dodaj"}</button>` : ""} ${isMine ? `<button class="red" style="width:auto; margin-left:5px;" onclick="deleteB('${t}')">Usuń</button>` : ""}</div>`; h.appendChild(div); }); }
+    function renderServices(){ let s = document.getElementById("servicePick"); s.innerHTML = '<option value="">Wybierz usługę</option>'; Object.keys(services).forEach(k => s.innerHTML += `<option value="${k}">${services[k].name} (${services[k].price} zł)</option>`); }
+    function openF(t) { let pID = localStorage.getItem("pID"); db.ref(`approved_partners/${pID.replace(/\./g, '_')}`).once('value', (s) => { if(!s.exists()) return alert("Czekaj na zatwierdzenie!"); hour = t; document.getElementById("formPanel").style.display = "block"; if(bookings[sel] && bookings[sel][t]) { let b = bookings[sel][t]; document.getElementById("name").value = b.name; document.getElementById("phone").value = b.phone; document.getElementById("addr").value = b.addr; document.getElementById("regNum").value = b.reg; document.getElementById("servicePick").value = b.serviceId; calc(); } }); }
+    function save() { let addr = document.getElementById("addr").value; if (!validateAddress(addr)) return alert("BŁĄD: Adres musi zawierać kod pocztowy XX-XXX!"); let pID = localStorage.getItem("pID"), pName = localStorage.getItem("pName"); let total = document.getElementById("finalTotal").innerText; db.ref(`bookings/${sel}/${hour}`).set({ name: document.getElementById("name").value, phone: document.getElementById("phone").value, reg: document.getElementById("regNum").value, note: document.getElementById("servicePick").options[document.getElementById("servicePick").selectedIndex].text, addr: addr, totalPrice: total, partnerId: pID, partnerName: pName }); alert("Zapisano!"); document.getElementById('formPanel').style.display = 'none'; }
+    function deleteB(t) { if(confirm("Na pewno usunąć?")) db.ref(`bookings/${sel}/${t}`).remove(); }    
+    render();
+</script>
+</body>
+</html>
